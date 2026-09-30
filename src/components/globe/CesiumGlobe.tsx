@@ -190,6 +190,7 @@ export function CesiumGlobe({
   const satEntityIdsRef = useRef<string[]>([]);
   const outageEntityIdsRef = useRef<string[]>([]);
   const connectorEntityIdsRef = useRef<string[]>([]);
+  const [viewerReady, setViewerReady] = useState(false);
 
   const handleHotspotClick = useCallback(
     (data: HotspotData | null) => { onHotspotClick?.(data); },
@@ -249,6 +250,7 @@ export function CesiumGlobe({
     // NO atmosphere ellipsoid entity — using Cesium's built-in skyAtmosphere instead
 
     viewerRef.current = viewer;
+    setViewerReady(true);
 
     // Deterministic async init: base → night lights → (env layers effect runs separately).
     // No parallel .then() chains — everything is awaited in order so removeAll() never
@@ -400,7 +402,7 @@ export function CesiumGlobe({
     if (viewer.scene.skyAtmosphere) {
       viewer.scene.skyAtmosphere.show = active.has("atmosphere");
     }
-  }, [envLayers]);
+  }, [envLayers, viewerReady]);
 
   // Tesla Aurora — dynamic polar rings reacting to Kp + solarActivity layer toggle
   useEffect(() => {
