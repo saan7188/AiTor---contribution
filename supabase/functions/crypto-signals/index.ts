@@ -5,44 +5,91 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
 };
 
-async function fetchPolymarketEvents() {
+function parseArray(value: unknown): unknown[] {
+  if (Array.isArray(value)) return value;
+  if (typeof value !== "string" || !value.trim()) return [];
   try {
-    const res = await fetch("https://gamma-api.polymarket.com/events?closed=false&limit=30&active=true&order=volume24hr&ascending=false");
-    if (!res.ok) throw new Error(`Polymarket API error: ${res.status}`);
-    const events = await res.json();
-    return events.map((event: any) => {
-      const market = event.markets?.[0];
-      const liquidity = market?.liquidity ?? 0;
-      const volume24hr = market?.volume24hr ?? 0;
-      const totalVolume = market?.volume ?? 0;
-      const bestBid = market?.bestBid ?? null;
-      const bestAsk = market?.bestAsk ?? null;
-      const spread = bestBid && bestAsk ? (bestAsk - bestBid).toFixed(4) : null;
-      const outcomes = market?.outcomes ? JSON.parse(market.outcomes) : null;
-      const outcomePrices = market?.outcomePrices ? JSON.parse(market.outcomePrices) : null;
-      return {
-        id: event.id || crypto.randomUUID(),
-        title: event.title || "Unknown Event",
-        description: event.description?.substring(0, 200) || "",
-        category: event.tag || "General",
-        outcomes: outcomes,
-        outcomePrices: outcomePrices,
-        liquidity: liquidity,
-        volume24hr: volume24hr,
-        totalVolume: totalVolume,
-        bestBid: bestBid,
-        bestAsk: bestAsk,
-        spread: spread,
-        endDate: event.endDate || null,
-        image: event.image || null,
-        slug: event.slug || null,
-        source: "polymarket",
-      };
-    });
-  } catch (e) {
-    console.error("Polymarket fetch error:", e);
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
     return [];
   }
+}
+
+function finiteNumber(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+async function fetchPolymarketEvents() {
+  const res = await fetch(
+    "https://gamma-api.polymarket.com/events?closed=false&limit=30&active=true&order=volume24hr&ascending=false",
+    { headers: { accept: "application/json" }, signal: AbortSignal.timeout(12_000) },
+  );
+  if (!res.ok) throw new Error(`Polymarket API error: ${res.status}`);
+  const events = await res.json();
+  if (!Array.isArray(events)) throw new Error("Polymarket returned an unexpected event payload");
+
+  return events.map((event: any) => {
+    // Keep every market in an event; taking only markets[0] silently discarded
+    // multi-market events and most outcome-level data.
+    const markets = (Array.isArray(event.markets) ? event.markets : []).map((market: any) => {
+      const outcomes = parseArray(market?.outcomes).map(String);
+      const prices = parseArray(market?.outcomePrices);
+      const tokenIds = parseArray(market?.clobTokenIds);
+      const outcomeRows = outcomes.map((name, index) => ({
+        name,
+        price: finiteNumber(prices[index]),
+        // Gamma does not guarantee a per-outcome 24h change field on every
+        // market. Return null rather than manufacturing a change value.
+        priceChange24h: finiteNumber(
+          Array.isArray(market?.oneDayPriceChanges)
+            ? market.oneDayPriceChanges[index]
+            : parseArray(market?.oneDayPriceChanges)[index],
+        ),
+        tokenId: typeof tokenIds[index] === "string" ? tokenIds[index] : null,
+      }));
+      const bestBid = finiteNumber(market?.bestBid);
+      const bestAsk = finiteNumber(market?.bestAsk);
+      return {
+        id: String(market?.id ?? ""),
+        question: String(market?.question ?? event?.title ?? "Untitled market"),
+        slug: market?.slug ?? null,
+        outcomes: outcomeRows,
+        liquidity: finiteNumber(market?.liquidity),
+        volume24hr: finiteNumber(market?.volume24hr),
+        totalVolume: finiteNumber(market?.volume),
+        bestBid,
+        bestAsk,
+        spread: bestBid !== null && bestAsk !== null ? Number((bestAsk - bestBid).toFixed(4)) : null,
+        endDate: market?.endDate ?? event?.endDate ?? null,
+        closed: Boolean(market?.closed),
+      };
+    });
+
+    const primary = markets[0];
+    return {
+      id: String(event?.id ?? ""),
+      title: String(event?.title ?? "Unknown Event"),
+      description: String(event?.description ?? "").slice(0, 200),
+      category: event?.tag ?? event?.category ?? "General",
+      // Backward-compatible fields for existing consumers.
+      outcomes: primary?.outcomes.map((row: any) => row.name) ?? [],
+      outcomePrices: primary?.outcomes.map((row: any) => row.price) ?? [],
+      liquidity: primary?.liquidity ?? null,
+      volume24hr: primary?.volume24hr ?? null,
+      totalVolume: primary?.totalVolume ?? null,
+      bestBid: primary?.bestBid ?? null,
+      bestAsk: primary?.bestAsk ?? null,
+      spread: primary?.spread ?? null,
+      markets,
+      endDate: event?.endDate ?? null,
+      image: event?.image ?? null,
+      slug: event?.slug ?? null,
+      source: "polymarket",
+    };
+  });
 }
 
 async function fetchCoinGeckoTrending() {
