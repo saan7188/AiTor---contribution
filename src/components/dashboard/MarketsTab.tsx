@@ -22,6 +22,20 @@ interface Market {
   endDate: string | null;
   image: string | null;
   slug: string | null;
+  markets?: Array<{
+    id: string;
+    question: string;
+    slug: string | null;
+    outcomes: Array<{ name: string; price: number | null; priceChange24h: number | null; tokenId: string | null }>;
+    liquidity: number | null;
+    volume24hr: number | null;
+    totalVolume: number | null;
+    bestBid: number | null;
+    bestAsk: number | null;
+    spread: number | null;
+    endDate: string | null;
+    closed: boolean;
+  }>;
 }
 
 const CATEGORIES = ["All", "Politics", "Crypto", "Sports", "Tech", "Culture", "World"];
@@ -114,9 +128,13 @@ export function MarketsTab() {
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {filtered.map((market) => {
-            const outcomes = market.outcomes || [];
-            const prices = market.outcomePrices || [];
-            const hasMultiple = outcomes.length > 2;
+            const nestedMarkets = market.markets?.length ? market.markets : [{
+              id: market.id, question: market.title, slug: market.slug,
+              outcomes: (market.outcomes || []).map((name, i) => ({ name, price: market.outcomePrices?.[i] ? Number(market.outcomePrices[i]) : null, priceChange24h: null, tokenId: null })),
+              liquidity: market.liquidity, volume24hr: market.volume24hr, totalVolume: market.totalVolume,
+              bestBid: market.bestBid, bestAsk: market.bestAsk,
+              spread: market.spread ? Number(market.spread) : null, endDate: market.endDate, closed: false,
+            }];
             return (
               <div
                 key={market.id}
@@ -136,51 +154,38 @@ export function MarketsTab() {
                   </div>
                 </div>
 
-                {/* Outcome prices with liquidity */}
-                {prices.length > 0 && (
-                  <div className="space-y-1.5 mb-3">
-                    {outcomes.slice(0, hasMultiple ? 5 : 2).map((outcome, i) => {
-                      const price = prices[i] ? parseFloat(prices[i]) : null;
-                      const percent = price !== null ? Math.round(price * 100) : null;
-                      return (
-                        <div key={i} className="flex items-center gap-2">
-                          <span className="text-[9px] font-mono text-muted-foreground/70 w-16 truncate" title={outcome}>{outcome}</span>
-                          <div className="flex-1 h-2.5 bg-muted/20 rounded-full overflow-hidden">
-                            <div
-                              className={`h-full rounded-full transition-all ${i === 0 ? "bg-cyan-500/70" : i === 1 ? "bg-amber-500/60" : "bg-violet-500/50"}`}
-                              style={{ width: `${percent ?? 0}%` }}
-                            />
-                          </div>
-                          <span className="text-[11px] font-mono font-bold text-foreground/80 w-10 text-right">{percent !== null ? `${percent}%` : "—"}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-
-                {/* Liquidity + Volume + Spread */}
-                <div className="flex items-center gap-3 mt-auto pt-2 border-t border-border/20">
-                  <div className="flex items-center gap-1.5">
-                    <Droplets className="w-3 h-3 text-cyan-400/60" />
-                    <span className="text-[9px] font-mono text-cyan-300/70">Liq: {formatVolume(market.liquidity)}</span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <TrendingUp className="w-3 h-3 text-muted-foreground/40" />
-                    <span className="text-[9px] font-mono text-muted-foreground/50">Vol: {formatVolume(market.totalVolume || market.volume24hr)}</span>
-                  </div>
-                  {market.spread && (
-                    <span className="text-[8px] font-mono text-muted-foreground/40">Spr: {market.spread}</span>
-                  )}
-                  {market.slug && (
-                    <a
-                      href={`https://polymarket.com/event/${market.slug}?ref=${POLYMARKET_REF}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex items-center gap-1 text-[9px] font-mono text-primary/60 hover:text-primary transition-colors ml-auto"
-                    >
-                      Trade <ExternalLink className="w-2.5 h-2.5" />
-                    </a>
-                  )}
+                {/* Every market and its individual outcomes, not only the event's first market */}
+                <div className="space-y-3 mb-3">
+                  {nestedMarkets.map((submarket) => (
+                    <div key={submarket.id || submarket.question} className="rounded-lg border border-border/25 p-2.5">
+                      {nestedMarkets.length > 1 && <p className="text-[10px] font-medium text-foreground/80 mb-2">{submarket.question}</p>}
+                      <div className="space-y-1.5">
+                        {submarket.outcomes.map((outcome, i) => {
+                          const percent = outcome.price !== null ? Math.round(outcome.price * 100) : null;
+                          const change = outcome.priceChange24h;
+                          return (
+                            <div key={outcome.tokenId || outcome.name || i} className="flex items-center gap-2">
+                              <span className="text-[9px] font-mono text-muted-foreground/70 w-16 truncate" title={outcome.name}>{outcome.name}</span>
+                              <div className="flex-1 h-2.5 bg-muted/20 rounded-full overflow-hidden">
+                                <div className={`h-full rounded-full transition-all ${i === 0 ? "bg-cyan-500/70" : i === 1 ? "bg-amber-500/60" : "bg-violet-500/50"}`} style={{ width: `${Math.max(0, Math.min(100, percent ?? 0))}%` }} />
+                              </div>
+                              <span className="text-[11px] font-mono font-bold text-foreground/80 w-10 text-right">{percent !== null ? `${percent}%` : "—"}</span>
+                              <span className={`text-[9px] font-mono w-12 text-right ${change === null ? "text-muted-foreground/40" : change > 0 ? "text-emerald-400" : change < 0 ? "text-rose-400" : "text-muted-foreground"}`}>
+                                {change === null ? "—" : `${change > 0 ? "+" : ""}${(change * 100).toFixed(1)}%`}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-2 pt-2 border-t border-border/15">
+                        <span className="text-[9px] font-mono text-cyan-300/70">Liq: {formatVolume(submarket.liquidity)}</span>
+                        <span className="text-[9px] font-mono text-muted-foreground/50">24h: {formatVolume(submarket.volume24hr)}</span>
+                        <span className="text-[9px] font-mono text-muted-foreground/50">Total: {formatVolume(submarket.totalVolume)}</span>
+                        {submarket.spread !== null && <span className="text-[9px] font-mono text-muted-foreground/40">Spread: {submarket.spread.toFixed(3)}</span>}
+                        {submarket.slug && <a href={`https://polymarket.com/event/${submarket.slug}?ref=${POLYMARKET_REF}`} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-[9px] font-mono text-primary/60 hover:text-primary transition-colors ml-auto">Trade <ExternalLink className="w-2.5 h-2.5" /></a>}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
             );
