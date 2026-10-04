@@ -18,6 +18,17 @@ interface PolymarketEvent {
   image: string | null;
   slug: string | null;
   source: string;
+  outcomes?: string[];
+  outcomePrices?: Array<number | string>;
+  markets?: Array<{
+    id: string;
+    question: string;
+    slug: string | null;
+    outcomes: Array<{ name: string; price: number | null; priceChange24h: number | null }>;
+    liquidity: number | null;
+    volume24hr: number | null;
+    totalVolume: number | null;
+  }>;
 }
 
 interface TrendingCoin {
@@ -151,9 +162,12 @@ export function SignalsTab() {
         {tab === "predictions" && (
           <div className={view === "grid" ? "grid grid-cols-1 sm:grid-cols-2 gap-3" : "space-y-2"}>
             {filteredMarkets.map((event) => {
-              const yesPercent = event.yesPrice ? Math.round(parseFloat(event.yesPrice) * 100) : null;
-              const noPercent = event.noPrice ? Math.round(parseFloat(event.noPrice) * 100) : null;
               const impact = getImpactLevel(event.volume);
+              const nestedMarkets = event.markets?.length ? event.markets : [{
+                id: event.id, question: event.title, slug: event.slug,
+                outcomes: (event.outcomes || []).map((name, i) => ({ name, price: event.outcomePrices?.[i] == null ? null : Number(event.outcomePrices[i]), priceChange24h: null })),
+                liquidity: null, volume24hr: event.volume, totalVolume: event.totalVolume,
+              }];
               return (
                 <div key={event.id} className="p-4 rounded-xl border border-border/40 bg-card/30 backdrop-blur-sm hover:bg-card/50 hover:border-primary/20 transition-all">
                   <div className="flex items-start gap-3">
@@ -168,25 +182,29 @@ export function SignalsTab() {
                         </Badge>
                       </div>
 
-                      {/* YES/NO bars */}
-                      {yesPercent !== null && noPercent !== null && (
-                        <div className="mt-3 space-y-1.5">
-                          <div className="flex items-center gap-2">
-                            <span className="text-[9px] font-mono text-secondary w-7">YES</span>
-                            <div className="flex-1 h-2 bg-muted/20 rounded-full overflow-hidden">
-                              <div className="h-full bg-secondary/80 rounded-full transition-all" style={{ width: `${yesPercent}%` }} />
+                      {/* Render every outcome in each market, including non-binary events */}
+                      <div className="mt-3 space-y-3">
+                        {nestedMarkets.map((market) => (
+                          <div key={market.id || market.question} className="space-y-1.5">
+                            {nestedMarkets.length > 1 && <p className="text-[10px] text-foreground/70">{market.question}</p>}
+                            {market.outcomes.map((outcome, index) => {
+                              const percent = outcome.price === null ? null : Math.round(outcome.price * 100);
+                              const change = outcome.priceChange24h;
+                              return <div key={outcome.name || index} className="flex items-center gap-2">
+                                <span className="text-[9px] font-mono text-muted-foreground/70 w-20 truncate" title={outcome.name}>{outcome.name}</span>
+                                <div className="flex-1 h-2 bg-muted/20 rounded-full overflow-hidden"><div className="h-full bg-secondary/70 rounded-full transition-all" style={{ width: `${Math.max(0, Math.min(100, percent ?? 0))}%` }} /></div>
+                                <span className="text-[10px] font-mono font-bold text-foreground/80 w-9 text-right">{percent === null ? "—" : `${percent}%`}</span>
+                                <span className={`text-[9px] font-mono w-12 text-right ${change == null ? "text-muted-foreground/40" : change > 0 ? "text-emerald-400" : change < 0 ? "text-rose-400" : "text-muted-foreground"}`}>{change == null ? "—" : `${change > 0 ? "+" : ""}${(change * 100).toFixed(1)}%`}</span>
+                              </div>;
+                            })}
+                            <div className="flex flex-wrap gap-x-3 text-[8px] font-mono text-muted-foreground/50">
+                              {market.liquidity != null && <span>Liq: {formatVolume(market.liquidity)}</span>}
+                              {market.volume24hr != null && <span>24h: {formatVolume(market.volume24hr)}</span>}
+                              {market.totalVolume != null && <span>Total: {formatVolume(market.totalVolume)}</span>}
                             </div>
-                            <span className="text-[10px] font-mono font-bold text-secondary w-8 text-right">{yesPercent}%</span>
                           </div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-[9px] font-mono text-destructive w-7">NO</span>
-                            <div className="flex-1 h-2 bg-muted/20 rounded-full overflow-hidden">
-                              <div className="h-full bg-destructive/60 rounded-full transition-all" style={{ width: `${noPercent}%` }} />
-                            </div>
-                            <span className="text-[10px] font-mono font-bold text-destructive w-8 text-right">{noPercent}%</span>
-                          </div>
-                        </div>
-                      )}
+                        ))}
+                      </div>
 
                       {/* Footer */}
                       <div className="flex items-center justify-between mt-3">
@@ -200,7 +218,7 @@ export function SignalsTab() {
                         </div>
                         {event.slug && (
                           <a
-                            href={`https://polymarket.com/event/${event.slug}`}
+                            href={`https://polymarket.com/event/${event.slug}?ref=aitor`}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="flex items-center gap-1 text-[8px] font-mono text-primary/60 hover:text-primary transition-colors"
