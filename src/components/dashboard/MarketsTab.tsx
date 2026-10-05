@@ -214,6 +214,7 @@ export function MarketsTab() {
               spread: market.spread,
               endDate: market.endDate,
               closed: false,
+              acceptingOrders: true,
             }];
 
             return (
