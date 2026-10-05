@@ -5,6 +5,8 @@ import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
+interface HistoryPoint { t: number; p: number; }
+
 interface PolymarketEvent {
   id: string;
   title: string;
@@ -18,6 +20,17 @@ interface PolymarketEvent {
   image: string | null;
   slug: string | null;
   source: string;
+  outcomes?: string[];
+  outcomePrices?: Array<number | string>;
+  markets?: Array<{
+    id: string;
+    question: string;
+    slug: string | null;
+    outcomes: Array<{ name: string; price: number | null; priceChange24h: number | null; tokenId?: string | null }>;
+    liquidity: number | null;
+    volume24hr: number | null;
+    totalVolume: number | null;
+  }>;
 }
 
 interface TrendingCoin {
@@ -43,6 +56,15 @@ const getImpactLevel = (volume: number): { label: string; className: string } =>
   return { label: "Low", className: "border-muted-foreground/30 text-muted-foreground bg-muted/20" };
 };
 
+function Sparkline({ points }: { points?: HistoryPoint[] }) {
+  if (!points || points.length < 2) return <span className="text-[8px] font-mono text-muted-foreground/35">history unavailable</span>;
+  const min = Math.min(...points.map((p) => p.p));
+  const max = Math.max(...points.map((p) => p.p));
+  const range = Math.max(max - min, 0.0001);
+  const coords = points.map((p, i) => `${((i / (points.length - 1)) * 64).toFixed(1)},${(18 - ((p.p - min) / range) * 16).toFixed(1)}`).join(" ");
+  return <svg viewBox="0 0 64 20" className="w-16 h-5 shrink-0" aria-label="24 hour price history"><polyline points={coords} fill="none" stroke="currentColor" strokeWidth="1.5" vectorEffect="non-scaling-stroke" /></svg>;
+}
+
 const formatVolume = (n: number | null | undefined) => {
   const val = typeof n === 'number' && !isNaN(n) ? n : 0;
   if (val >= 1e6) return `$${(val / 1e6).toFixed(1)}M`;
@@ -52,11 +74,33 @@ const formatVolume = (n: number | null | undefined) => {
 
 export function SignalsTab() {
   const [polymarket, setPolymarket] = useState<PolymarketEvent[]>([]);
+  const [history, setHistory] = useState<Record<string, { points: HistoryPoint[]; change24h: number | null }>>({});
   const [trending, setTrending] = useState<TrendingCoin[]>([]);
   const [loading, setLoading] = useState(false);
   const [category, setCategory] = useState("All");
   const [view, setView] = useState<"list" | "grid">("list");
   const [tab, setTab] = useState<"predictions" | "trending">("predictions");
+
+  const fetchHistory = async (events: PolymarketEvent[]) => {
+    const tokenIds = Array.from(new Set(events.flatMap((event) =>
+      (event.markets || []).flatMap((market) => market.outcomes.map((outcome) => outcome.tokenId).filter(Boolean) as string[])
+    )));
+    if (!tokenIds.length) return;
+
+    const next: Record<string, { points: HistoryPoint[]; change24h: number | null }> = {};
+    for (let i = 0; i < tokenIds.length; i += 80) {
+      try {
+        const { data, error } = await supabase.functions.invoke("crypto-signals", {
+          body: { action: "polymarket-history", tokenIds: tokenIds.slice(i, i + 80) },
+        });
+        if (error) throw error;
+        Object.assign(next, data?.history || {});
+      } catch (error) {
+        console.warn("Polymarket history batch failed:", error);
+      }
+    }
+    setHistory(next);
+  };
 
   const fetchData = async () => {
     setLoading(true);
@@ -65,7 +109,10 @@ export function SignalsTab() {
         body: { action: "all" },
       });
       if (error) throw error;
-      setPolymarket(data?.polymarket || []);
+      const nextMarkets = data?.polymarket || [];
+      setPolymarket(nextMarkets);
+      setHistory({});
+      void fetchHistory(nextMarkets);
       setTrending(data?.trending || []);
     } catch (e) {
       console.error(e);
@@ -151,9 +198,12 @@ export function SignalsTab() {
         {tab === "predictions" && (
           <div className={view === "grid" ? "grid grid-cols-1 sm:grid-cols-2 gap-3" : "space-y-2"}>
             {filteredMarkets.map((event) => {
-              const yesPercent = event.yesPrice ? Math.round(parseFloat(event.yesPrice) * 100) : null;
-              const noPercent = event.noPrice ? Math.round(parseFloat(event.noPrice) * 100) : null;
               const impact = getImpactLevel(event.volume);
+              const nestedMarkets = event.markets?.length ? event.markets : [{
+                id: event.id, question: event.title, slug: event.slug,
+                outcomes: (event.outcomes || []).map((name, i) => ({ name, price: event.outcomePrices?.[i] == null ? null : Number(event.outcomePrices[i]), priceChange24h: null, tokenId: null })),
+                liquidity: null, volume24hr: event.volume, totalVolume: event.totalVolume,
+              }];
               return (
                 <div key={event.id} className="p-4 rounded-xl border border-border/40 bg-card/30 backdrop-blur-sm hover:bg-card/50 hover:border-primary/20 transition-all">
                   <div className="flex items-start gap-3">
@@ -168,25 +218,31 @@ export function SignalsTab() {
                         </Badge>
                       </div>
 
-                      {/* YES/NO bars */}
-                      {yesPercent !== null && noPercent !== null && (
-                        <div className="mt-3 space-y-1.5">
-                          <div className="flex items-center gap-2">
-                            <span className="text-[9px] font-mono text-secondary w-7">YES</span>
-                            <div className="flex-1 h-2 bg-muted/20 rounded-full overflow-hidden">
-                              <div className="h-full bg-secondary/80 rounded-full transition-all" style={{ width: `${yesPercent}%` }} />
+                      {/* Render every outcome in each market, including non-binary events */}
+                      <div className="mt-3 space-y-3">
+                        {nestedMarkets.map((market) => (
+                          <div key={market.id || market.question} className="space-y-1.5">
+                            {nestedMarkets.length > 1 && <p className="text-[10px] text-foreground/70">{market.question}</p>}
+                            {market.outcomes.map((outcome, index) => {
+                              const percent = outcome.price === null ? null : Math.round(outcome.price * 100);
+                              const current = outcome.tokenId ? history[outcome.tokenId] : undefined;
+                              const change = current?.change24h ?? outcome.priceChange24h;
+                              return <div key={outcome.tokenId || outcome.name || index} className="flex items-center gap-2">
+                                <span className="text-[9px] font-mono text-muted-foreground/70 w-20 truncate" title={outcome.name}>{outcome.name}</span>
+                                <div className="flex-1 h-2 bg-muted/20 rounded-full overflow-hidden"><div className="h-full bg-secondary/70 rounded-full transition-all" style={{ width: `${Math.max(0, Math.min(100, percent ?? 0))}%` }} /></div>
+                                <span className="text-[10px] font-mono font-bold text-foreground/80 w-9 text-right">{percent === null ? "—" : `${percent}%`}</span>
+                                <span className={`text-[9px] font-mono w-12 text-right ${change == null ? "text-muted-foreground/40" : change > 0 ? "text-emerald-400" : change < 0 ? "text-rose-400" : "text-muted-foreground"}`}>{change == null ? "—" : `${change > 0 ? "+" : ""}${(change * 100).toFixed(1)}%`}</span>
+                                <Sparkline points={current?.points} />
+                              </div>;
+                            })}
+                            <div className="flex flex-wrap gap-x-3 text-[8px] font-mono text-muted-foreground/50">
+                              {market.liquidity != null && <span>Liq: {formatVolume(market.liquidity)}</span>}
+                              {market.volume24hr != null && <span>24h: {formatVolume(market.volume24hr)}</span>}
+                              {market.totalVolume != null && <span>Total: {formatVolume(market.totalVolume)}</span>}
                             </div>
-                            <span className="text-[10px] font-mono font-bold text-secondary w-8 text-right">{yesPercent}%</span>
                           </div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-[9px] font-mono text-destructive w-7">NO</span>
-                            <div className="flex-1 h-2 bg-muted/20 rounded-full overflow-hidden">
-                              <div className="h-full bg-destructive/60 rounded-full transition-all" style={{ width: `${noPercent}%` }} />
-                            </div>
-                            <span className="text-[10px] font-mono font-bold text-destructive w-8 text-right">{noPercent}%</span>
-                          </div>
-                        </div>
-                      )}
+                        ))}
+                      </div>
 
                       {/* Footer */}
                       <div className="flex items-center justify-between mt-3">
@@ -200,7 +256,7 @@ export function SignalsTab() {
                         </div>
                         {event.slug && (
                           <a
-                            href={`https://polymarket.com/event/${event.slug}`}
+                            href={`https://polymarket.com/event/${event.slug}?ref=aitor`}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="flex items-center gap-1 text-[8px] font-mono text-primary/60 hover:text-primary transition-colors"

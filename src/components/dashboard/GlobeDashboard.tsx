@@ -12,8 +12,6 @@ import { GlobeDiagnostics } from "./GlobeDiagnostics";
 import { useUnifiedIntel } from "@/hooks/useUnifiedIntel";
 import { useUAPSightings } from "@/hooks/useUAPSightings";
 import { useTier } from "@/hooks/useTier";
-import { useAirTraffic } from "@/hooks/useAirTraffic";
-import { useMarineTraffic } from "@/hooks/useMarineTraffic";
 import { useInternetOutages } from "@/hooks/useInternetOutages";
 import { CONFLICT_ZONES } from "@/lib/geo-datasets";
 import { DEFAULT_ACTIVE_LAYERS, TIER_LABEL, layerDef, type EnvLayerKey } from "@/lib/globe-layers";
@@ -35,10 +33,9 @@ export function GlobeDashboard() {
   const intel = useUnifiedIntel(envLayers);
   const { sightings } = useUAPSightings();
   const { tier, hasAccess } = useTier();
-  const { flights } = useAirTraffic();
-  const { ships } = useMarineTraffic();
   const { outages } = useInternetOutages(true);
-  const allFlights = intel.aviation.length > flights.length ? intel.aviation : flights;
+  const allFlights = intel.aviation;
+  const ships = intel.marine;
   const globeNavRef = useRef<((lat: number, lng: number, alt: number) => void) | null>(null);
 
   const toggleLayer = useCallback((key: LayerKey) => setVisibleLayers((previous) => {
@@ -121,7 +118,7 @@ export function GlobeDashboard() {
                 <Button variant="ghost" size="icon" className="h-6 w-6 rounded-sm" onClick={() => setControlsOpen(false)} aria-label="Ocultar controles"><PanelLeftClose /></Button>
               </div>
               <div className="space-y-2">
-                {legend(undefined, false)}
+                {legend(undefined, true)}
                 <NavigatePanel onNavigate={handleNavigate} />
                 <Button variant="outline" size="sm" onClick={() => setMobilePanel(mobilePanel === "diagnostics" ? null : "diagnostics")}
                   className="h-8 w-full rounded-sm border-border/70 bg-card/75 text-[10px] uppercase text-muted-foreground">
@@ -161,7 +158,7 @@ export function GlobeDashboard() {
           ))}
         </div>
         {mobilePanel && <div className="fixed inset-x-0 bottom-14 z-50 max-h-[62vh] overflow-y-auto border-t border-primary/30 bg-background/95 p-3 backdrop-blur-xl md:hidden">
-          {mobilePanel === "legend" && legend(() => setMobilePanel(null), false)}
+          {mobilePanel === "legend" && legend(() => setMobilePanel(null), true)}
           {mobilePanel === "navigate" && <NavigatePanel onNavigate={handleNavigate} forceOpen onClose={() => setMobilePanel(null)} />}
           {mobilePanel === "feed" && <div className="h-[52vh]">{feed}</div>}
           {mobilePanel === "diagnostics" && <GlobeDiagnostics />}
